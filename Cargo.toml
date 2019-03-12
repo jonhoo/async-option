@@ -1,9 +1,22 @@
 [package]
-name = "async-cell"
+name = "async-option"
 version = "0.1.0"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 edition = "2018"
+license = "MIT"
+homepage = "https://github.com/jonhoo/async-option"
+repository = "https://github.com/jonhoo/async-option"
+description = "Essentially an asynchronous Async<Mutex<Option<T>>>"
+categories = ["asynchronous"]
+
+[badges]
+travis-ci = { repository = "jonhoo/async-option" }
+codecov = { repository = "jonhoo/async-option", branch = "master", service = "github" }
+maintenance = { status = "passively-maintained" }
 
 [dependencies]
-tokio-sync = "0.1"
 futures = "0.1"
+tokio-sync = "0.1"
+
+[dev-dependencies]
+tokio-mock-task = "0.1"
