@@ -283,7 +283,6 @@ impl<T> Stream for Aption<T> {
     }
 }
 
-/*
 #[cfg(test)]
 mod test {
     use super::*;
@@ -293,50 +292,73 @@ mod test {
     fn basic() {
         let mut mt = MockTask::new();
 
-        let (mut tx, mut rx) = new::<usize>();
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::Ready(())));
+        let mut a = new::<usize>();
+        assert_eq!(mt.enter(|| a.poll_take()), Ok(Async::NotReady));
         assert!(!mt.is_notified());
-        assert_eq!(mt.enter(|| tx.try_send(42)), Ok(AsyncSink::Ready));
+        assert_eq!(mt.enter(|| a.poll_put(42)), Ok(AsyncSink::Ready));
+        assert!(mt.is_notified()); // taker is notified
+        assert_eq!(mt.enter(|| a.poll_take()), Ok(Async::Ready(42)));
+
+        assert_eq!(mt.enter(|| a.poll_take()), Ok(Async::NotReady));
         assert!(!mt.is_notified());
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(Some(42)));
-
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::Ready(())));
-        assert_eq!(mt.enter(|| tx.try_send(43)), Ok(AsyncSink::Ready));
-        assert!(mt.is_notified());
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::NotReady));
-        assert_eq!(mt.enter(|| tx.try_send(44)), Ok(AsyncSink::NotReady(44)));
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(Some(43)));
-        assert!(mt.is_notified()); // sender is notified
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::Ready(())));
-        assert_eq!(mt.enter(|| tx.try_send(44)), Ok(AsyncSink::Ready));
+        assert_eq!(mt.enter(|| a.poll_put(43)), Ok(AsyncSink::Ready));
+        assert!(mt.is_notified()); // taker is notified
+        assert_eq!(mt.enter(|| a.poll_put(44)), Ok(AsyncSink::NotReady(44)));
+        assert!(!mt.is_notified());
+        assert_eq!(mt.enter(|| a.poll_take()), Ok(Async::Ready(43)));
+        assert!(mt.is_notified()); // putter is notified
+        assert_eq!(mt.enter(|| a.poll_take()), Ok(Async::NotReady));
+        assert!(!mt.is_notified());
+        assert_eq!(mt.enter(|| a.poll_put(44)), Ok(AsyncSink::Ready));
         assert!(mt.is_notified());
 
-        mt.enter(|| drop(tx));
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(Some(44)));
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(None));
+        // close fails since there's still a message to be sent
+        assert_eq!(mt.enter(|| a.poll_close()), Ok(Async::NotReady));
+        assert_eq!(mt.enter(|| a.poll_take()), Ok(Async::Ready(44)));
+        assert!(mt.is_notified()); // closer is notified
+        assert_eq!(mt.enter(|| a.poll_close()), Ok(Async::Ready(())));
+        assert!(!mt.is_notified());
+        assert_eq!(mt.enter(|| a.poll_take()), Err(Closed));
+    }
+
+    #[test]
+    fn sink_stream() {
+        use tokio::prelude::*;
+
+        let a = new::<usize>();
+        let (mut tx, rx) = tokio_sync::mpsc::unbounded_channel();
+        tokio::run(future::lazy(move || {
+            tokio::spawn(
+                rx.forward(a.clone().sink_map_err(|_| unreachable!()))
+                    .map(|_| ())
+                    .map_err(|_| unreachable!()),
+            );
+
+            // send a bunch of things, and make sure we get them all
+            tx.try_send(1).unwrap();
+            tx.try_send(2).unwrap();
+            tx.try_send(3).unwrap();
+            tx.try_send(4).unwrap();
+            tx.try_send(5).unwrap();
+            drop(tx);
+
+            a.collect()
+                .inspect(|v| {
+                    assert_eq!(v, &[1, 2, 3, 4, 5]);
+                })
+                .map(|_| ())
+        }));
     }
 
     #[test]
     fn notified_on_empty_drop() {
         let mut mt = MockTask::new();
 
-        let (tx, mut rx) = new::<usize>();
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::NotReady);
+        let mut a = new::<usize>();
+        assert_eq!(mt.enter(|| a.poll_take()), Ok(Async::NotReady));
         assert!(!mt.is_notified());
-        mt.enter(|| drop(tx));
+        assert_eq!(mt.enter(|| a.poll_close()), Ok(Async::Ready(())));
         assert!(mt.is_notified());
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(None));
-    }
-
-    #[test]
-    fn sender_sees_receiver_drop() {
-        let mut mt = MockTask::new();
-
-        let (mut tx, rx) = new::<usize>();
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::Ready(())));
-        mt.enter(|| drop(rx));
-        assert_eq!(mt.enter(|| tx.poll_ready()), Err(()));
-        assert_eq!(mt.enter(|| tx.try_send(42)), Err(42));
+        assert_eq!(mt.enter(|| a.poll_take()), Err(Closed));
     }
 }
-*/

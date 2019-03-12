@@ -20,3 +20,4 @@ tokio-sync = "0.1"
 
 [dev-dependencies]
 tokio-mock-task = "0.1"
+tokio = "0.1"
