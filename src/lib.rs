@@ -25,7 +25,7 @@
 )]
 #![cfg_attr(test, deny(warnings))]
 
-use futures::{task, try_ready, Async, AsyncSink, Poll, Sink, StartSend, Stream};
+use futures::{task, try_ready, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 use std::cell::UnsafeCell;
 use std::sync::Arc;
 use std::{fmt, mem};
@@ -114,6 +114,57 @@ unsafe impl<T: Send> Send for Inner<T> {}
 impl<T> fmt::Debug for Inner<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "AptionInner")
+    }
+}
+
+struct TakeFuture<T>(Option<Aption<T>>);
+impl<T> Future for TakeFuture<T> {
+    type Item = (Aption<T>, T);
+    type Error = Closed;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let t = try_ready!(self
+            .0
+            .as_mut()
+            .expect("called poll after future resolved")
+            .poll_take());
+        Ok(Async::Ready((self.0.take().unwrap(), t)))
+    }
+}
+
+struct PutFuture<T>(Option<Aption<T>>, Option<T>);
+impl<T> Future for PutFuture<T> {
+    type Item = Aption<T>;
+    type Error = T;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let t = self.1.take().expect("called poll after future resolved");
+        match self
+            .0
+            .as_mut()
+            .expect("called poll after future resolved")
+            .poll_put(t)
+        {
+            Ok(AsyncSink::Ready) => Ok(Async::Ready(self.0.take().unwrap())),
+            Ok(AsyncSink::NotReady(t)) => {
+                self.1 = Some(t);
+                Ok(Async::NotReady)
+            }
+            Err(t) => Err(t),
+        }
+    }
+}
+
+impl<T> Aption<T> {
+    /// Returns a `Future` that resolves when a value is successfully taken from the `Aption<T>`.
+    pub fn take(self) -> impl Future<Item = (Self, T), Error = Closed> {
+        TakeFuture(Some(self))
+    }
+
+    /// Returns a `Future` that resolves when the given value is successfully placed in the
+    /// `Aption<T>`.
+    pub fn put(self, t: T) -> impl Future<Item = Self, Error = T> {
+        PutFuture(Some(self), Some(t))
     }
 }
 
@@ -345,6 +396,30 @@ mod test {
             a.collect()
                 .inspect(|v| {
                     assert_eq!(v, &[1, 2, 3, 4, 5]);
+                })
+                .map(|_| ())
+        }));
+    }
+
+    #[test]
+    fn futures() {
+        use tokio::prelude::*;
+
+        let a = new::<usize>();
+        tokio::run(future::lazy(move || {
+            a.put(42)
+                .map_err(|_| unreachable!())
+                .and_then(|a| a.take())
+                .map_err(|_| unreachable!())
+                .and_then(|(a, v)| {
+                    assert_eq!(v, 42);
+                    a.put(43)
+                })
+                .map_err(|_| unreachable!())
+                .and_then(|a| a.take())
+                .map_err(|_| unreachable!())
+                .inspect(|(_, v)| {
+                    assert_eq!(*v, 43);
                 })
                 .map(|_| ())
         }));
