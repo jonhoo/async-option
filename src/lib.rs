@@ -107,6 +107,10 @@ struct Inner<T> {
     take_task: task::AtomicTask,
 }
 
+// we never expose &T, only ever &mut T, so we only require T: Send
+unsafe impl<T: Send> Sync for Inner<T> {}
+unsafe impl<T: Send> Send for Inner<T> {}
+
 impl<T> fmt::Debug for Inner<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "AptionInner")
